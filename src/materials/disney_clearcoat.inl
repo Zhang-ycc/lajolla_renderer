@@ -18,8 +18,7 @@ Spectrum eval_op::operator()(const DisneyClearcoat &bsdf) const {
     Real h_out = fabs(dot(half_vector, dir_out));
 
     Real n = 1.5;
-    Real r = pow(n - 1, 2) / pow(n + 1, 2);
-    Spectrum R_0 = Spectrum(r, r, r);
+    Spectrum R_0 = make_const_spectrum(pow(n - 1, 2) / pow(n + 1, 2));
     Spectrum F_c = R_0 + (1 - R_0) * pow(1 - h_out, 5);
 
     Real a_g = (1 - clearcoat_gloss) * 0.1 + clearcoat_gloss * 0.001;

@@ -15,7 +15,7 @@ Spectrum eval_op::operator()(const DisneySheen &bsdf) const {
     // Homework 1: implement this!
     Spectrum base_color = eval(bsdf.base_color, vertex.uv, vertex.uv_screen_size, texture_pool);
     Real sheen_tint = eval(bsdf.sheen_tint, vertex.uv, vertex.uv_screen_size, texture_pool);
-    Spectrum white(1., 1., 1.);
+    Spectrum white = make_const_spectrum(Real(1));
     Spectrum C_tint = luminance(base_color) > 0 ? base_color / luminance(base_color) : white;
     Spectrum C_sheen = (1 - sheen_tint) + sheen_tint * C_tint;
     Vector3 half_vector = normalize(dir_in + dir_out);
