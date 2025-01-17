@@ -153,7 +153,7 @@ std::optional<BSDFSampleRecord>
         DisneyMetal disneyMetal = {bsdf.base_color, bsdf.roughness, bsdf.anisotropic};
         return this->operator()(disneyMetal);
     } else if (w < diffuseWeight + metalWeight + glassWeight) {
-        Real rescaleW = w / (diffuseWeight + metalWeight + glassWeight);
+        Real rescaleW = (w - diffuseWeight - metalWeight) / glassWeight;
         return sample_bsdf(disneyGlass, dir_in, vertex, texture_pool, rnd_param_uv, rescaleW, dir);
     } else if (w < diffuseWeight + metalWeight + glassWeight + clearcoatWeight) {
         DisneyClearcoat disneyClearcoat = {bsdf.clearcoat_gloss};
