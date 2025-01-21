@@ -99,9 +99,15 @@ std::optional<BSDFSampleRecord>
     // Convert the incoming direction to local coordinates
     Vector3 local_dir_in = to_local(frame, dir_in);
     Real roughness = eval(bsdf.roughness, vertex.uv, vertex.uv_screen_size, texture_pool);
+    Real anisotropic = eval(bsdf.anisotropic, vertex.uv, vertex.uv_screen_size, texture_pool);
+    Real a_min = 0.0001;
+    
     roughness = std::clamp(roughness, Real(0.01), Real(1));
-    Real alpha = roughness * roughness;
-    Vector3 local_micro_normal = sample_visible_normals(local_dir_in, alpha, rnd_param_uv);
+
+    Real aspect = sqrt(1 - 0.9 * anisotropic);
+    Real a_x = fmax(a_min, roughness * roughness / aspect);
+    Real a_y = fmax(a_min, roughness * roughness * aspect);
+    Vector3 local_micro_normal = sample_visible_normals(local_dir_in, a_x, a_y, rnd_param_uv);
         
     // Transform the micro normal to world space
     Vector3 half_vector = to_world(frame, local_micro_normal);
