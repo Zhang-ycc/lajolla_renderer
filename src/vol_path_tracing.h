@@ -11,7 +11,7 @@ Spectrum vol_path_tracing_1(const Scene &scene,
     Vector2 screen_pos((x + next_pcg32_real<Real>(rng)) / w,
                        (y + next_pcg32_real<Real>(rng)) / h);
     Ray ray = sample_primary(scene.camera, screen_pos);
-    RayDifferential ray_diff = init_ray_differential(w, h);
+    RayDifferential ray_diff = RayDifferential{Real(0), Real(0)};
 
     const Medium &media = scene.media[scene.camera.medium_id];
 
@@ -42,7 +42,7 @@ Spectrum vol_path_tracing_2(const Scene &scene,
     Vector2 screen_pos((x + next_pcg32_real<Real>(rng)) / w,
                        (y + next_pcg32_real<Real>(rng)) / h);
     Ray ray = sample_primary(scene.camera, screen_pos);
-    RayDifferential ray_diff = init_ray_differential(w, h);
+    RayDifferential ray_diff = RayDifferential{Real(0), Real(0)};
 
     const Medium &media = scene.media[scene.camera.medium_id];
     Spectrum sigma_a = get_sigma_a(media, ray.org);
@@ -120,7 +120,7 @@ Spectrum vol_path_tracing_3(const Scene &scene,
     Vector2 screen_pos((x + next_pcg32_real<Real>(rng)) / w,
                        (y + next_pcg32_real<Real>(rng)) / h);
     Ray ray = sample_primary(scene.camera, screen_pos);
-    RayDifferential ray_diff = init_ray_differential(w, h);
+    RayDifferential ray_diff = RayDifferential{Real(0), Real(0)};
     
     int current_medium_id = scene.camera.medium_id;
 
@@ -196,6 +196,11 @@ Spectrum vol_path_tracing_3(const Scene &scene,
             Vector2 rnd_param{next_pcg32_real<Real>(rng), next_pcg32_real<Real>(rng)};
             PhaseFunction phaseFunction = get_phase_function(media);
             std::optional<Spectrum> next_dir = sample_phase_function(phaseFunction, -ray.dir, rnd_param);
+            if (!next_dir) {
+                // phase function sampling failed. Abort the loop.
+                break;
+            }
+
             Spectrum rho = eval(phaseFunction, -ray.dir, *next_dir);
             current_path_throughput *= (rho / pdf_sample_phase(phaseFunction, -ray.dir, *next_dir)) * sigma_s;
             // update ray.dir
@@ -311,7 +316,7 @@ Spectrum vol_path_tracing_4(const Scene &scene,
     Vector2 screen_pos((x + next_pcg32_real<Real>(rng)) / w,
                        (y + next_pcg32_real<Real>(rng)) / h);
     Ray ray = sample_primary(scene.camera, screen_pos);
-    RayDifferential ray_diff = init_ray_differential(w, h);
+    RayDifferential ray_diff = RayDifferential{Real(0), Real(0)};
     
     int current_medium_id = scene.camera.medium_id;
 
@@ -420,6 +425,11 @@ Spectrum vol_path_tracing_4(const Scene &scene,
             Vector2 rnd_param{next_pcg32_real<Real>(rng), next_pcg32_real<Real>(rng)};
             PhaseFunction phaseFunction = get_phase_function(media);
             std::optional<Spectrum> next_dir = sample_phase_function(phaseFunction, -ray.dir, rnd_param);
+            if (!next_dir) {
+                // phase function sampling failed. Abort the loop.
+                break;
+            }
+
             Spectrum rho = eval(phaseFunction, -ray.dir, *next_dir);
             Real pdf_phase_sample = pdf_sample_phase(phaseFunction, -ray.dir, *next_dir);
             current_path_throughput *= (rho / pdf_phase_sample) * sigma_s;
@@ -512,24 +522,20 @@ Spectrum next_event_estimation_surface(const Scene &scene, Spectrum p, int curre
     }
 
     if (T_light > 0) {
-        // Compute T_light * G * rho * L & pdf_nee
-        PhaseFunction phaseFunction = get_phase_function(scene.media[current_medium_id]);
-
-        Real G = max(-dot(dir_light, p_prime.normal), Real(0)) / distance_squared(p_prime.position, p);
-        Spectrum rho = eval(phaseFunction, -ray.dir, dir_light);
-        Spectrum L = emission(light, -dir_light, Real(0), p_prime, scene);
-        Real pdf_nee = light_pmf(scene, light_id) * pdf_point_on_light(light, p_prime, p, scene);
-        Spectrum contrib = T_light * G * rho * L / pdf_nee;
-
-        Real pdf_phase = pdf_sample_phase(phaseFunction, -ray.dir, dir_light) * G * p_trans_dir;
-        // power heuristics
-        Real w = (pdf_nee * pdf_nee) / (pdf_nee * pdf_nee + pdf_phase * pdf_phase);
-
         // surface
         const Material &mat = scene.materials[vertex.material_id];
         Spectrum f = eval(mat, -ray.dir, dir_light, vertex, scene.texture_pool);
 
-        return w * contrib * f;
+        Real G = max(-dot(dir_light, p_prime.normal), Real(0)) / distance_squared(p_prime.position, p);
+        Spectrum L = emission(light, -dir_light, Real(0), p_prime, scene);
+        Real pdf_nee = light_pmf(scene, light_id) * pdf_point_on_light(light, p_prime, p, scene);
+        Spectrum contrib = T_light * G * f * L / pdf_nee;
+
+        Real pdf_bsdf_sample = pdf_sample_bsdf(mat, -ray.dir, dir_light, vertex, scene.texture_pool) * G * p_trans_dir;
+        // power heuristics
+        Real w = (pdf_nee * pdf_nee) / (pdf_nee * pdf_nee + pdf_bsdf_sample * pdf_bsdf_sample);
+
+        return w * contrib;
     }
 
     return make_zero_spectrum();
@@ -547,7 +553,7 @@ Spectrum vol_path_tracing_5(const Scene &scene,
     Vector2 screen_pos((x + next_pcg32_real<Real>(rng)) / w,
                        (y + next_pcg32_real<Real>(rng)) / h);
     Ray ray = sample_primary(scene.camera, screen_pos);
-    RayDifferential ray_diff = init_ray_differential(w, h);
+    RayDifferential ray_diff = RayDifferential{Real(0), Real(0)};
     
     int current_medium_id = scene.camera.medium_id;
 
@@ -556,8 +562,9 @@ Spectrum vol_path_tracing_5(const Scene &scene,
     int bounces = 0;
     Real dir_pdf = 0; //in solid angle measure
     Spectrum nee_p_cache;
-    Real multi_trans_pdf = 1;
+    Real multi_trans_pdf = 1.0;
     Real never_scatter = true;
+    Real eta_scale = 1.0;
 
     while (true) {
         bool scatter = false;
@@ -597,6 +604,7 @@ Spectrum vol_path_tracing_5(const Scene &scene,
         
         // If we reach a surface and didn’t scatter, include the emission.
         if (!scatter && vertex_) {
+            ray.org = vertex_->position;
             if (never_scatter) {
                 // This is the only way we can see the light source, so
                 // we don’t need multiple importance sampling.
@@ -656,6 +664,11 @@ Spectrum vol_path_tracing_5(const Scene &scene,
             Vector2 rnd_param{next_pcg32_real<Real>(rng), next_pcg32_real<Real>(rng)};
             PhaseFunction phaseFunction = get_phase_function(media);
             std::optional<Spectrum> next_dir = sample_phase_function(phaseFunction, -ray.dir, rnd_param);
+            if (!next_dir) {
+                // phase function sampling failed. Abort the loop.
+                break;
+            }
+
             Spectrum rho = eval(phaseFunction, -ray.dir, *next_dir);
             Real pdf_phase_sample = pdf_sample_phase(phaseFunction, -ray.dir, *next_dir);
 
@@ -667,15 +680,51 @@ Spectrum vol_path_tracing_5(const Scene &scene,
             dir_pdf = pdf_phase_sample;
             nee_p_cache = ray.org;
             multi_trans_pdf = 1;
-        } else {
+        } else if (vertex_) {
             // Hit a surface -- don’t need to deal with this yet
-            break;
+            PathVertex vertex = *vertex_;
+            Spectrum nee_contrib = next_event_estimation_surface(scene, ray.org, current_medium_id, ray, bounces, vertex,rng);
+            radiance += current_path_throughput * nee_contrib;
+            
+            const Material &mat = scene.materials[vertex.material_id];
+
+            Vector2 bsdf_rnd_param_uv{next_pcg32_real<Real>(rng), next_pcg32_real<Real>(rng)};
+            Real bsdf_rnd_param_w = next_pcg32_real<Real>(rng);
+            std::optional<BSDFSampleRecord> bsdf_sample_ = sample_bsdf(mat, -ray.dir, vertex, scene.texture_pool, bsdf_rnd_param_uv, bsdf_rnd_param_w);
+            if (!bsdf_sample_) {
+                // BSDF sampling failed. Abort the loop.
+                break;
+            }
+            const BSDFSampleRecord &bsdf_sample = *bsdf_sample_;
+            Vector3 dir_bsdf = bsdf_sample.dir_out;
+
+            // Update ray differentials & eta_scale
+            if (bsdf_sample.eta != 0) {
+                eta_scale /= (bsdf_sample.eta * bsdf_sample.eta);
+            }
+
+            Spectrum f = eval(mat, -ray.dir, dir_bsdf, vertex, scene.texture_pool);
+            Real pdf_bsdf_sample = pdf_sample_bsdf(mat, -ray.dir, dir_bsdf, vertex, scene.texture_pool);
+
+            current_path_throughput *= (f / pdf_bsdf_sample);
+            // update ray.dir
+            // Trace a ray towards bsdf_dir. Note that again we have
+            // to have an "epsilon" tnear to prevent self intersection.
+            ray = Ray{vertex.position, dir_bsdf, get_intersection_epsilon(scene), infinity<Real>()};
+
+            current_medium_id = update_medium(vertex, ray, current_medium_id);
+            // store pdf, nee_p_cache
+            dir_pdf = pdf_bsdf_sample;
+            nee_p_cache = ray.org;
+            multi_trans_pdf = 1;
+
+            // break;
         }
 
         Real rr_prob = 1.0;
         int rr_depth = scene.options.rr_depth;
         if (bounces >= rr_depth) {
-            rr_prob = min(max(current_path_throughput), 0.95);
+            rr_prob = min(max((1 / eta_scale) * current_path_throughput), 0.95);
             if (next_pcg32_real<Real>(rng) > rr_prob) {
                 break;
             }
