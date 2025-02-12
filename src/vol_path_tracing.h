@@ -776,65 +776,57 @@ Spectrum next_event_estimation(const Scene &scene, Spectrum p, int current_mediu
                 return make_zero_spectrum();
             }
             next_t = distance(p, isect->position);
-            // Account for the transmittance to next_t
-            if (shadow_medium_id != -1) {
-                Real u = next_pcg32_real<Real>(rng);
-                int channel = std::clamp(int(u * 3), 0, 2);
-                Real accum_t = 0;
-                int iteration = 0;
-                Ray iter_ray{p, dir_light};
-                Spectrum majorant = get_majorant(media, shadow_ray);
-
-                while (true) {
-
-                    if (majorant[channel] <= 0) {
-                        break;
-                    }
-                    if (iteration >= max_null_collisions) {
-                        break;
-                    }
-
-                    Real t = -log(1 - next_pcg32_real<Real>(rng)) / majorant[channel];
-                    Real dt = next_t - accum_t;
-                    // Update accumulated distance
-                    accum_t = min(accum_t + t, next_t);
-                    if (t < dt){
-                        iter_ray.org += t * iter_ray.dir;
-
-                        Spectrum sigma_a = get_sigma_a(media, iter_ray.org);
-                        Spectrum sigma_s = get_sigma_s(media, iter_ray.org);
-                        Spectrum sigma_t = sigma_a + sigma_s;
-                        Spectrum sigma_n = majorant - sigma_t;
-
-                        // didn’t hit the surface, so this is a null-scattering event
-                        T_light *= exp(-majorant * t) * sigma_n / max(majorant);
-                        p_trans_nee *= exp(-majorant * t) * majorant / max(majorant);
-                        Spectrum real_prob = sigma_t / majorant;
-                        p_trans_dir *= exp(-majorant * t) * majorant * (1 - real_prob) / max(majorant);
-                        if (max(T_light) <= 0) {
-                            // optimization for places where sigma_n = 0
-                            break;
-                        }
-                    } else {
-                        // hit the surface
-                        T_light *= exp(-majorant * dt);
-                        p_trans_nee *= exp(-majorant * dt);
-                        p_trans_dir *= exp(-majorant * dt);
-                        // iter_ray.org = isect->position;
-                        break;
-                    }
-                    iteration += 1;
-                }
-            }
         }
 
-        // Spectrum sigma_a = get_sigma_a(media, p);
-        // Spectrum sigma_s = get_sigma_s(media, p);
-        // Spectrum sigma_t = sigma_a + sigma_s;
-        // if (shadow_medium_id != -1) {
-        //     T_light *= exp(-sigma_t * next_t);
-        //     p_trans_dir *= exp(-sigma_t * next_t);
-        // }
+        // Account for the transmittance to next_t(including p_prime!)
+        if (shadow_medium_id != -1) {
+            Real u = next_pcg32_real<Real>(rng);
+            int channel = std::clamp(int(u * 3), 0, 2);
+            Real accum_t = 0;
+            int iteration = 0;
+            Ray iter_ray{p, dir_light};
+            Spectrum majorant = get_majorant(media, shadow_ray);
+
+            while (true) {
+                if (majorant[channel] <= 0) {
+                    break;
+                }
+                if (iteration >= max_null_collisions) {
+                    break;
+                }
+
+                Real t = -log(1 - next_pcg32_real<Real>(rng)) / majorant[channel];
+                Real dt = next_t - accum_t;
+                // Update accumulated distance
+                accum_t = min(accum_t + t, next_t);
+                if (t < dt){
+                    iter_ray.org += t * iter_ray.dir;
+
+                    Spectrum sigma_a = get_sigma_a(media, iter_ray.org);
+                    Spectrum sigma_s = get_sigma_s(media, iter_ray.org);
+                    Spectrum sigma_t = sigma_a + sigma_s;
+                    Spectrum sigma_n = majorant - sigma_t;
+
+                    // didn’t hit the surface, so this is a null-scattering event
+                    T_light *= exp(-majorant * t) * sigma_n / max(majorant);
+                    p_trans_nee *= exp(-majorant * t) * majorant / max(majorant);
+                    Spectrum real_prob = sigma_t / majorant;
+                    p_trans_dir *= exp(-majorant * t) * majorant * (1 - real_prob) / max(majorant);
+                    if (max(T_light) <= 0) {
+                        // optimization for places where sigma_n = 0
+                        break;
+                    }
+                } else {
+                    // hit the surface
+                    T_light *= exp(-majorant * dt);
+                    p_trans_nee *= exp(-majorant * dt);
+                    p_trans_dir *= exp(-majorant * dt);
+                    // iter_ray.org = isect->position;
+                    break;
+                }
+                iteration += 1;
+            }
+        }
         
 
         if (!isect) {
